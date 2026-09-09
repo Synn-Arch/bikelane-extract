@@ -1,0 +1,27 @@
+# bikelane-extract — new region template. Copy to configs/<region>.yaml and fill in.
+
+extends: default.yaml
+
+region: MYTOWN             # upper-case tag → lower-cased in every output filename
+city: My Town              # Census county-subdivision name (stage 0, MassDOT only)
+state: MA
+crs: "EPSG:32619"          # projected CRS in metres — your UTM zone
+data_root: /path/to/data   # all outputs go under here unless overridden in paths:
+
+# paths:                   # optional: point at existing files instead of moving them
+#   tiles_dir:         /existing/tiles
+#   tile_mappings_csv: /existing/Tile_Mappings.csv
+
+# Fill these after running the sweeps (README §7). Stages refuse to run while TODO.
+signs:
+  conf_keep:               # bikelane signs -c <cfg> filter --sweep
+    BikeOnly: TODO
+    Sharrow: TODO
+    OnlyBikeBus: 1.01
+join:
+  radius_m: TODO           # bikelane join -c <cfg> match --sweep
+gaps:
+  scan:                    # bikelane gaps -c <cfg> scan --sweep, then inspect candidates in QGIS
+    gap_max_m: TODO
+    ang: TODO
+    lat_max_m: TODO

@@ -1,0 +1,136 @@
+# bikelane-extract — default parameters (region-independent)
+#
+# Every region config `extends: default.yaml` and adds: region / city / state /
+# crs, its data paths, and values for the keys marked TODO below. Those four
+# groups (signs.conf_keep, join.radius_m, gaps.scan.*) depend on the region's
+# symbol density and road geometry and are derived with the `--sweep` commands;
+# a stage refuses to run while one of them is still TODO.
+#
+# Everything else here was fixed on OpenSatMap / MassDOT 15 cm imagery and does
+# not normally change between regions.
+
+crs: "EPSG:32619"          # override per region (projected, metres)
+resolution_m: 0.15
+tile_px: 1024
+data_root: ./data          # override per region or machine
+
+weights:
+  seg:  weights/seg_unet_r34.pt
+  yolo: weights/yolo26m_bikesign.pt
+
+# ── stage 0: imagery
+imagery:
+  index_year: 2025         # MassDOT COQ<year>INDEX_POLY.shp
+  towns_year: 2025         # pygris county_subdivisions year
+  tile_overlap: 0.25
+  empty_threshold: 0.50    # drop tiles with >= this fraction of nodata pixels
+
+# ── stage 1: prepare (OpenSatMap level-20, 0.15 m/px)
+prepare:
+  hf_repo: z-hb/OpenSatMap                                  # Hugging Face dataset (CC BY-NC-SA 4.0)
+  tools_repo: https://github.com/OpenSatMap/OpenSatMap-offical
+  zip_prefix: 20picstrainvaltest
+  anno_json: annotrainval20.json
+  image_size: 4096
+  zoom: 20
+  clip_size: 1024
+
+# ── stage 2: seg train
+train:
+  encoder: resnet34
+  num_classes: 4           # 0 bg, 1 lane line, 2 curb, 3 virtual line (255 ignore)
+  dilate_px: 3
+  batch: 8
+  epochs: 30
+  bg_weight: 0.1
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  num_workers: 8
+
+# ── stage 3: predict
+predict:
+  batch: 16
+
+# ── stage 4: centerlines
+centerlines:
+  chunk_tiles: 6           # tiles per chunk side (6 → 4864² canvas, ~3 GB peak)
+  overlap_tiles: 1
+  use_curb: true
+  voronoi:                 # 06 v8 (pixels unless noted); see notebooks/06_centerline_clean_v8
+    close_k: 5
+    minpix: 8
+    curb_minpix: 25
+    ang_merge: 15.0
+    lat_tol: 7.0
+    gap_max: 130.0
+    multipass: false
+    bin_w: 20.0
+    dmin: 3                # half-width 0.9 m — keeps bike-lane-width centerlines
+    dmax: 20
+    ang_tol: 30.0
+    min_branch: 30
+    tip: 5
+    cap_filter: true
+    border_exempt: true
+  graph:
+    snap_m: 1.5
+    min_len_m: 3.0
+    dedup_cell_m: 2.0
+    min_comp_len_m: 20.0
+  clean:
+    hook_ang: 110.0
+    hook_max_m: 15.0
+    dup_lat_m: 1.0
+    dup_frac: 0.9
+    dup_ang: 20.0
+    min_len_m: 3.0
+    stitch: false          # endpoint-tangent stitching draws chords on curves; abandoned
+
+# ── stage 5: signs
+signs:
+  conf_infer: 0.25         # inference threshold; raw CSV kept so this never re-runs
+  conf_keep:               # acceptance threshold per class (1.01 = drop class)
+    BikeOnly: TODO
+    Sharrow: TODO
+    OnlyBikeBus: 1.01      # 1.01 = drop the class entirely
+  iou: 0.5
+  imgsz: 1024
+  batch: 16
+  neighbor_r_m: 30.0       # isolation flag radius (recorded, not filtered); shrink in dense downtowns
+
+# ── stage 6: join
+join:
+  radius_m: TODO           # symbol centre → all centerlines within R  (join match --sweep)
+  clean:
+    hook_ang: 110.0
+    hook_max_m: 15.0
+    dup_lat_m: 1.0
+    dup_frac: 0.9
+    dup_ang: 20.0
+    merge_opposite: false  # opposite-direction parallel = two-way facility, keep
+    short_m: 10.0
+    drop_short: false
+
+# ── osm (junction nodes for gaps intersections)
+osm:
+  network_type: drive      # NOT 'bike' — OSM bike tags are held back for validation
+  buffer_m: 200            # around the tile extent
+  junction_min_degree: 3
+
+# ── stage 7: gaps
+gaps:
+  scan:
+    tail_m: 8.0            # direction measured over the last 8 m, not the tangent
+    gap_max_m: TODO        # where candidate growth flattens  (gaps scan --sweep)
+    ang: TODO              # tighten together with lat_max_m as gap_max_m grows
+    lat_max_m: TODO
+    crossing:              # a gap is an intersection if a cross-direction centerline sits in it
+      radius_m: 30.0
+      ang: 30.0
+      min_len_m: 3.0
+  intersections:           # 16 — looser, since crossings enter at an angle
+    tail_m: 8.0
+    gap_max_m: 60.0
+    ang: 35.0
+    lat_max_m: 3.0
+    node_snap_m: 25.0      # use OSM junction node within this distance, else midpoint

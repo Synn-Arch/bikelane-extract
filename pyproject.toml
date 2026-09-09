@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bikelane-extract"
+version = "0.1.0"
+description = "Lane-level bike-lane extraction from high-resolution orthophotos (MassDOT 15 cm)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "SungHo Synn" }]
+dependencies = [
+    "numpy>=1.24,<2",
+    "scipy",
+    "shapely>=2.0",
+    "networkx",
+    "pyyaml",
+    "tqdm",
+    "pillow",
+    "opencv-python-headless",
+    "scikit-image",
+]
+
+[project.optional-dependencies]
+# stage 0: MassDOT imagery download / mosaic / tiling
+imagery = ["geopandas", "pygris", "rasterio", "requests"]
+# stages 1-3: segmentation train / predict (torch install separately for your CUDA)
+seg = ["segmentation-models-pytorch", "huggingface_hub"]
+# stage 5: YOLO bike-sign detection
+signs = ["ultralytics"]
+# osm junction nodes (for gaps intersections)
+osm = ["osmnx>=1.9", "geopandas"]
+# diagnostic notebooks
+notebooks = ["matplotlib", "jupyter"]
+all = ["bikelane-extract[imagery,seg,signs,osm,notebooks]"]
+
+[project.scripts]
+bikelane = "bikelane_extract.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bikelane_extract*"]

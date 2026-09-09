@@ -1,0 +1,34 @@
+# bikelane-extract — running on a laptop (macOS / Linux), starting from released weights.
+#
+#   pip install torch torchvision            # macOS: default wheel includes MPS
+#   pip install -e ".[all]"                  # or just ".[signs,osm]" if you skip stage 0
+#   bikelane weights -c configs/_local_example.yaml
+#   bikelane predict -c configs/_local_example.yaml          # MPS auto-detected; --device cpu to force
+#   bikelane centerlines -c configs/_local_example.yaml extract --chunk 4   # ~1.5 GB RAM per chunk
+#   ...
+#
+# Nothing here is machine-specific except data_root. Region parameters are
+# TODO as for any new region (README §7).
+
+extends: default.yaml
+
+region: LEXINGTON
+city: Lexington
+state: MA
+crs: "EPSG:32619"
+data_root: ~/bikelane-data       # ~20–50 GB per town (tiles + predictions)
+
+# If you copied tiles/predictions from the server instead of running stage 0 / 3:
+# paths:
+#   tiles_dir:         ~/bikelane-data/imagery/LEXINGTON/tiles
+#   tile_mappings_csv: ~/bikelane-data/imagery/LEXINGTON/Tile_Mappings.csv
+#   predictions_dir:   ~/bikelane-data/predictions/LEXINGTON
+
+centerlines:
+  chunk_tiles: 4                 # 6 on the server (~3 GB); 4 fits a 16 GB laptop comfortably
+train:
+  num_workers: 4
+predict:
+  batch: 4                       # MPS / CPU: smaller batches
+signs:
+  batch: 4

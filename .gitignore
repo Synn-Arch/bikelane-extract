@@ -1,0 +1,23 @@
+__pycache__/
+*.egg-info/
+weights/*.pt
+data/
+*.geojson
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Model weights: distribute through GitHub Releases
+weights/*.pt
+
+# OS / editor
+.DS_Store
+.vscode/
