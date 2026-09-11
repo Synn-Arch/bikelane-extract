@@ -1,0 +1,27 @@
+# bikelane-extract — project file.  Copy to bikelane.yaml, set city/state, then run the stages:
+#     bikelane fetch      bikelane tile      bikelane predict     bikelane centerlines all
+#     bikelane signs detect / filter         bikelane join match / clean
+#     bikelane osm        bikelane gaps scan / join / intersections
+#
+# Every command looks for this file in the current directory (or pass -c path/to/file).
+# Only `city` and `state` are required. Everything else has a default.
+
+city: Boston
+state: MA
+
+# data_root: ./data            # where everything is written (default ./data, created on first use)
+# crs: EPSG:32619              # default: the town's UTM zone
+
+# ── Optional: use data that already exists somewhere else instead of re-creating it
+# paths:
+#   tiles_dir:         /existing/Aerial_Images/BOSTON/BOSTON_Tiled
+#   tile_mappings_csv: /existing/Aerial_Images/BOSTON/Tile_Mappings.csv
+#   predictions_dir:   /existing/predictions/BOSTON
+
+# ── Optional: parameter overrides. Any key from bikelane_extract/default.yaml.
+# join:
+#   radius_m: 1.5
+# centerlines:
+#   chunk_tiles: 4               # laptop (~1.5 GB RAM instead of ~3 GB)
+# predict: {batch: 4}
+# signs:   {batch: 4}

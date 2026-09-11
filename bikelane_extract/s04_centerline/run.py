@@ -5,8 +5,9 @@
   clean     hooks + overlaps → centerlines_<region>_final.geojson         08d
   all       the three in sequence
 
-`extract` is the long one (tmux). Re-running it skips finished chunks;
-`--fresh` clears the cache; `--limit 3` is a smoke test.
+`extract` is the long one (tmux). Chunks run in parallel (--workers, default
+min(cpu, 8); ~3 GB RAM per worker at chunk=6). Re-running skips finished
+chunks; `--fresh` clears the cache; `--limit 3` is a smoke test.
 """
 from __future__ import annotations
 
@@ -23,9 +24,11 @@ def run(cfg: Config, argv=None, check: bool = False):
     ap.add_argument("--fresh", action="store_true", help="(extract) clear the chunk cache")
     ap.add_argument("--limit", type=int, default=0, help="(extract) only the first N chunks")
     ap.add_argument("--chunk", type=int, default=None, help="(extract) tiles per chunk side")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="(extract) parallel processes; default min(cpu, 8). ~3 GB RAM each at chunk=6")
     a = ap.parse_args(argv)
     if a.step in ("extract", "all"):
-        extract.run(cfg, check=check, fresh=a.fresh, limit=a.limit, chunk_tiles=a.chunk)
+        extract.run(cfg, check=check, fresh=a.fresh, limit=a.limit, chunk_tiles=a.chunk, workers=a.workers)
     if a.step in ("graph", "all"):
         graph.run(cfg, check=check)
     if a.step in ("clean", "all"):

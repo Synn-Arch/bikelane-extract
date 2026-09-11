@@ -79,4 +79,5 @@ def run(cfg: Config, argv=None, check: bool = False):
         print(f"  obs_ratio on joined lines: median {100*np.median(obs[nj>0]):.0f}%, "
               f"min {100*obs[nj>0].min():.0f}%")
     write_lines(out, out_lines, out_props, cfg.crs)
+    print ("next: bikelane gaps intersections")
     return out_lines, out_props

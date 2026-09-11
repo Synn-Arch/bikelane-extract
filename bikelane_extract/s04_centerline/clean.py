@@ -153,3 +153,4 @@ def run(cfg: Config, check=False):
     print("  remaining breaks are mostly intersection crossings — handled in `gaps` "
           "after the bike-sign join")
     write_lines(out, lines, None, cfg.crs)
+    print("→ next: bikelane signs detect")

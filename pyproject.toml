@@ -1,6 +1,8 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+# hatchling: editable installs write nothing into the source tree (a .pth in the venv only),
+# so `pip install -e .` works on CIFS/NFS shares where setuptools' egg-info fails.
 
 [project]
 name = "bikelane-extract"
@@ -8,10 +10,10 @@ version = "0.1.0"
 description = "Lane-level bike-lane extraction from high-resolution orthophotos (MassDOT 15 cm)"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "SungHo Synn" }]
 dependencies = [
-    "numpy>=1.24,<2",
+    "numpy>=1.24",
     "scipy",
     "shapely>=2.0",
     "networkx",
@@ -38,5 +40,8 @@ all = ["bikelane-extract[imagery,seg,signs,osm,notebooks]"]
 [project.scripts]
 bikelane = "bikelane_extract.cli:main"
 
-[tool.setuptools.packages.find]
-include = ["bikelane_extract*"]
+[tool.hatch.build.targets.wheel]
+packages = ["bikelane_extract"]
+
+[tool.hatch.build.targets.sdist]
+include = ["bikelane_extract", "bikelane.example.yaml", "README.md", "pyproject.toml"]

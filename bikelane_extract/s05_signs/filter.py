@@ -77,4 +77,4 @@ def run(cfg: Config, check=False, sweep=False):
                  cfg.crs)
     write_points(cfg.path("signs_dropped"), [(r["utm_x"], r["utm_y"]) for r in dropped],
                  [{k: r[k] for k in ("cls_name", "conf", "tile")} for r in dropped], cfg.crs)
-    print("→ next: bikelane join")
+    print("→ next: bikelane join match")

@@ -116,6 +116,7 @@ def run(cfg: Config, argv=None, check: bool = False):
     _report_components(res_lines, edges)
     write_lines(out_l, res_lines, res_props, cfg.crs)
     _write_links(out_x, edges, cfg.crs)
+    print("→ next: bikelane gaps network")
     return res_lines, res_props, edges
 
 

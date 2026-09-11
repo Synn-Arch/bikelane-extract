@@ -113,7 +113,32 @@ def load_all_chunks(chunk_dir: Path, region: str):
 
 # ── driver ──
 
-def run(cfg: Config, check=False, fresh=False, limit=0, chunk_tiles=None):
+_W = {}   # per-worker state (set by _init_worker)
+
+
+def _init_worker(pred_dir, tile_px, csv_path, res_m, params: dict, simplify_eps):
+    import os
+    os.environ.setdefault("OMP_NUM_THREADS", "1")     # numpy/scipy: one thread per process
+    _W["preds"] = PredictionGrid(pred_dir, tile_px)
+    _W["tg"] = TileGrid(csv_path, res_m, tile_px)
+    _W["P"] = VoronoiParams(**params)
+    _W["eps"] = simplify_eps
+
+
+def _do_chunk(job):
+    gx, gy, gx1, gy1, out = job
+    t0 = time.time()
+    try:
+        lines = process_chunk(_W["preds"], _W["tg"], gx, gy, gx1, gy1, _W["P"], _W["eps"])
+        save_chunk(Path(out), lines)
+        return gx, gy, len(lines), time.time() - t0, None
+    except MemoryError:
+        return gx, gy, 0, time.time() - t0, "MemoryError"
+    except Exception as e:
+        return gx, gy, 0, time.time() - t0, f"{type(e).__name__}: {e}"
+
+
+def run(cfg: Config, check=False, fresh=False, limit=0, chunk_tiles=None, workers=None):
     sec = cfg.get("centerlines")
     chunk = int(chunk_tiles or sec["chunk_tiles"])
     overlap = int(sec.get("overlap_tiles", 1))
@@ -159,25 +184,45 @@ def run(cfg: Config, check=False, fresh=False, limit=0, chunk_tiles=None):
     log(f"=== {cfg.region} | chunk={chunk} overlap={overlap} use_curb={P.use_curb} | "
         f"{len(jobs)} chunks ({done} done) ===")
 
-    t_start = time.time()
-    for i, (gx, gy) in enumerate(jobs, 1):
+    todo = []
+    for gx, gy in jobs:
         out = chunk_path(chunk_dir, cfg.region, gx, gy)
         if out.exists():
             continue
         gx1 = gx + chunk * preds.step_px + (T - preds.step_px)
         gy1 = gy + chunk * preds.step_px + (T - preds.step_px)
-        t0 = time.time()
-        try:
-            lines = process_chunk(preds, tg, gx, gy, gx1, gy1, P)
-            save_chunk(out, lines)
-            log(f"[{i}/{len(jobs)}] ({gx},{gy}) {len(lines):5d} lines  {time.time()-t0:5.0f}s  "
+        todo.append((gx, gy, gx1, gy1, str(out)))
+
+    import os
+    from dataclasses import asdict
+    n_workers = int(workers or sec.get("workers") or max(1, min(os.cpu_count() or 1, 8)))
+    n_workers = max(1, min(n_workers, len(todo) or 1))
+    log(f"{len(todo)} chunks to do with {n_workers} worker(s)  "
+        f"(~{3.0 * (chunk / 6) ** 2:.1f} GB RAM each at chunk={chunk})")
+
+    t_start = time.time()
+    done_n = 0
+
+    def report(gx, gy, n, dt, err):
+        nonlocal done_n
+        done_n += 1
+        if err:
+            log(f"[{done_n}/{len(todo)}] ({gx},{gy}) FAILED {err}")
+        else:
+            log(f"[{done_n}/{len(todo)}] ({gx},{gy}) {n:5d} lines  {dt:5.0f}s  "
                 f"elapsed {(time.time()-t_start)/60:.0f} min")
-        except MemoryError:
-            log(f"[{i}/{len(jobs)}] ({gx},{gy}) out of memory — re-run with a smaller --chunk "
-                f"(4 needs ~1.5 GB, 3 ~1 GB); finished chunks are kept")
-            sys.exit(1)
-        except Exception as e:  # keep going; the chunk stays missing and is reported below
-            log(f"[{i}/{len(jobs)}] ({gx},{gy}) {type(e).__name__}: {e}")
+
+    init_args = (str(pred_dir), cfg.tile_px, str(csv), cfg.resolution_m, asdict(P), 2.0)
+    if n_workers == 1:
+        _init_worker(*init_args)
+        for job in todo:
+            report(*_do_chunk(job))
+    else:
+        import multiprocessing as mp
+        ctx = mp.get_context("fork" if hasattr(os, "fork") else "spawn")
+        with ctx.Pool(n_workers, initializer=_init_worker, initargs=init_args) as pool:
+            for res in pool.imap_unordered(_do_chunk, todo):
+                report(*res)
 
     missing = [j for j in jobs if not chunk_path(chunk_dir, cfg.region, *j).exists()]
     n_lines = sum(len(load_chunk(chunk_path(chunk_dir, cfg.region, *j)))
@@ -186,4 +231,5 @@ def run(cfg: Config, check=False, fresh=False, limit=0, chunk_tiles=None):
         f"({len(missing)} failed)  {(time.time()-t_start)/60:.0f} min")
     if missing:
         log("  failed chunks: " + ", ".join(f"({gx},{gy})" for gx, gy in missing[:20]))
+        log("  re-run to retry them; if MemoryError, use --chunk 4 or fewer --workers")
     log("→ next: bikelane centerlines graph")

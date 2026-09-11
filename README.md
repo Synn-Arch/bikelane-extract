@@ -10,21 +10,17 @@ its length was directly observed versus filled in. It was developed on
 MassDOT imagery of Lexington and Boston, MA, but nothing below is specific to
 Massachusetts except the imagery download step.
 
-The output is deliberately **not a routable network**. Bike facilities are
-scattered; the road network already provides connectivity. What this adds is
-*where exactly* each facility is (which lane, to ~2 m) and *what type* it is.
-
 ---
 
 ## Contents
 
-1. [How the pipeline is organized](#1-how-the-pipeline-is-organised)
+1. [How the pipeline is organised](#1-how-the-pipeline-is-organised)
 2. [Requirements and installation](#2-requirements-and-installation)
-3. [Setting up a region config](#3-setting-up-a-region-config)
+3. [Configuration](#3-configuration)
 4. [Model weights](#4-model-weights)
 5. [Running the pipeline, stage by stage](#5-running-the-pipeline-stage-by-stage)
 6. [Output files](#6-output-files)
-7. [Adapting to a new region](#7-adapting-to-a-new-region)
+7. [Running a new town, and when to re-check parameters](#7-running-a-new-town-and-when-to-re-check-parameters)
 8. [Troubleshooting](#8-troubleshooting)
 9. [Repository layout](#9-repository-layout)
 
@@ -42,10 +38,10 @@ continue.
 |---|---------|--------------|------|-------|
 | 0 | `bikelane fetch`, `bikelane tile` | Download MassDOT orthophotos for a town, build one mosaic, cut it into 1024 px tiles | ~1 h | network, GDAL |
 | 1 | `bikelane prepare` | Unpack the OpenSatMap training set and bake lane-marking masks | hours | OpenSatMap download |
-| 2 | `bikelane train` | Train the lane-marking segmentation model (U-Net / ResNet34) | hours | GPU strongly recommended |
-| 3 | `bikelane predict` | Run the segmentation model on every tile → class masks | 10–30 min GPU, hours CPU | GPU recommended; CPU supported |
+| 2 | `bikelane train` | Train the lane-marking segmentation model (U-Net / ResNet34) | hours | GPU |
+| 3 | `bikelane predict` | Run the segmentation model on every tile → class masks | 10–30 min | GPU |
 | 4 | `bikelane centerlines` | Class masks → lane centerlines (Voronoi boundary between markings) → cleaned polylines | 1–3 h | CPU, RAM |
-| 5 | `bikelane signs` | Detect bike pavement symbols with YOLO; filter by confidence | 30 min + GPU, hours CPU | GPU recommended; CPU supported |
+| 5 | `bikelane signs` | Detect bike pavement symbols with YOLO; filter by confidence | 30 min + | GPU |
 | 6 | `bikelane join` | Attach symbols to centerlines → bike-lane lines with a type | seconds | — |
 | 7 | `bikelane gaps` | Close short gaps between bike-lane pieces; connect across intersections via nodes | seconds | `osm` output |
 | – | `bikelane osm` | Fetch the OSM road network and junction nodes for the region (used by stage 7) | minutes | network |
@@ -58,11 +54,12 @@ The normal path for a new town is:
 fetch → tile → predict → centerlines → signs → join → osm → gaps
 ```
 
-Every command takes the same two things:
+Every command has the same shape and reads the project file
+`bikelane.yaml` in the current directory (section 3):
 
 ```
-bikelane <stage> -c configs/<region>.yaml [step] [options]
-bikelane <stage> -c configs/<region>.yaml --check [step]   # validate inputs, run nothing
+bikelane <stage> [step] [options]
+bikelane <stage> --check [step]      # validate inputs for this stage, run nothing
 ```
 
 `--check` prints every input file the stage needs and whether it exists.
@@ -72,219 +69,160 @@ Use it before every stage.
 
 ## 2. Requirements and installation
 
-* Linux or macOS, Python ≥ 3.10. On Windows, everything except stage 1 should work natively. Stage 1 runs POSIX shell scripts, so use WSL for that stage.
-* A GPU is recommended for stages 2, 3, and 5. CUDA is supported on Linux and Apple MPS on macOS. The device is detected automatically, and `--device cpu` forces CPU execution.
-
-  * Stages 3 (`predict`) and 5 (`signs`) can run on CPU, although a full town may take several hours.
-  * Stage 2 (`train`) is generally impractical on CPU. Use the released weights unless you intend to train a new model.
-* Stage 4 needs about 3 GB RAM with the default chunk size. Use `--chunk 4` (about 1.5 GB) on a laptop or memory-constrained machine. `configs/_local_example.yaml` collects the laptop settings.
-* GDAL command-line tools (`gdalbuildvrt`, `gdal_translate`) are required for stage 0.
-* Allow about 50 GB free disk space per town for imagery, tiles, and predictions.
-
-### Standard installation
-
-On a normal local filesystem:
+* Linux or macOS, Python ≥ 3.10. (Windows: everything except stage 1, which
+  runs POSIX shell scripts — use WSL for that stage.)
+* A GPU for stages 2, 3 and 5: CUDA on Linux, Apple MPS on macOS (detected
+  automatically; `--device cpu` to force CPU). Stage 3 and 5 run on CPU in
+  a few hours per town; stage 2 (training) is impractical without CUDA —
+  use the released weights.
+* Stage 4 needs ~3 GB RAM at the default chunk size; use `--chunk 4`
+  (~1.5 GB) on a laptop, and lower `predict.batch` / `signs.batch` to 4 in a
+  `bikelane.yaml`.
+* GDAL command-line tools (`gdalbuildvrt`, `gdal_translate`) for stage 0.
+* ~50 GB free disk per town (imagery + tiles + predictions).
+* RAM: stage 4 peaks at ~3 GB with the default chunk size.
 
 ```bash
-git clone https://github.com/<you>/bikelane-extract
+git clone https://github.com/Synn-Arch/bikelane-extract
 cd bikelane-extract
+python -m venv .venv && source .venv/bin/activate
 
-python3 -m venv .venv
-source .venv/bin/activate
+# 1. PyTorch first — see https://pytorch.org/get-started/locally/
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # Linux + CUDA
+pip install torch torchvision                                                    # macOS (MPS included)
 
-python -m pip install --upgrade pip
-```
-
-Install PyTorch first. Choose the build that matches your platform and GPU environment using the official PyTorch installation instructions:
-
-https://pytorch.org/get-started/locally/
-
-Examples:
-
-```bash
-# Linux + NVIDIA GPU, example for CUDA 12.4
-pip install torch torchvision \
-    --index-url https://download.pytorch.org/whl/cu124
-
-# Linux, CPU only
-pip install torch torchvision \
-    --index-url https://download.pytorch.org/whl/cpu
-
-# macOS, MPS support is included when available
-pip install torch torchvision
-```
-
-Then install the package and all optional dependencies:
-
-```bash
+# 2. the package with everything
 pip install -e ".[all]"
 ```
 
-### Repositories on mounted or network filesystems
+Optional-dependency groups, if you only need part of the pipeline:
 
-Some mounted or network filesystems do not support all filesystem operations used by Python `venv` or setuptools. Symptoms include errors such as:
+| extra | installs | needed by |
+|-------|----------|-----------|
+| `imagery` | geopandas, pygris, rasterio, requests | stage 0 |
+| `seg` | segmentation-models-pytorch | stages 1–3 |
+| `signs` | ultralytics | stage 5 |
+| `osm` | osmnx, geopandas | `osm` |
+| `all` | all of the above | |
 
-```text
-Error: [Errno 5] Input/output error: 'lib' -> '.venv/lib64'
-Operation not permitted: '.venv/bin/python3'
-Operation not permitted: 'bikelane_extract.egg-info/...'
-```
+Stages 4, 6 and 7 need only the core dependencies (numpy, scipy, shapely,
+networkx, opencv, scikit-image), which are installed with the package itself.
 
-In this case, the repository and data can remain on the mounted filesystem. Put only the Python virtual environment on a local filesystem:
-
-```bash
-mkdir -p ~/.venvs
-python3 -m venv ~/.venvs/bikelane
-source ~/.venvs/bikelane/bin/activate
-
-python -m pip install --upgrade pip
-```
-
-Install the appropriate PyTorch build as described above.
-
-If editable installation also fails because setuptools cannot write `*.egg-info` into the repository, install from a temporary local copy:
-
-```bash
-# Run from the bikelane-extract repository root.
-
-rm -rf /tmp/bikelane-install-src
-cp -a . /tmp/bikelane-install-src
-
-python -m pip install "/tmp/bikelane-install-src[all]"
-```
-
-Then point Python back to the working copy so edits to the repository take effect immediately:
-
-```bash
-export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-```
-
-`PYTHONPATH` must be set again when opening a new shell unless it is added to your shell or development-environment configuration.
-
-Verify that the installed CLI uses the working copy:
-
-```bash
-which bikelane
-
-python - <<'PY'
-import bikelane_extract
-print("Using source:", bikelane_extract.__file__)
-PY
-
-bikelane --help
-```
-
-The reported source path should point to your working repository rather than `/tmp/bikelane-install-src` or `site-packages`.
-
-### Optional dependency groups
-
-| extra     | installs                              | needed by  |
-| --------- | ------------------------------------- | ---------- |
-| `imagery` | geopandas, pygris, rasterio, requests | stage 0    |
-| `seg`     | segmentation-models-pytorch           | stages 1–3 |
-| `signs`   | ultralytics                           | stage 5    |
-| `osm`     | osmnx, geopandas                      | `osm`      |
-| `all`     | all of the above                      |            |
-
-Stages 4, 6, and 7 need only the core dependencies (numpy, scipy, shapely, networkx, opencv, scikit-image), which are installed with the package itself.
-
-Check the installation:
+Check the install:
 
 ```bash
 bikelane --help
-bikelane gaps -c configs/lexington.yaml --check scan
+bikelane config              # after setting city/state in bikelane.yaml
 ```
 
 ---
 
-## 3. Setting up a region config
+## 3. Configuration
 
-Configuration lives in `configs/`:
+Two files, and you edit only the first:
 
-| file | role |
-|---|---|
-| `default.yaml` | every parameter that does **not** depend on the region — model, centerline extraction, cleaning tolerances, OSM settings. Region-dependent keys are set to `TODO` here. |
-| `_template.yaml` | skeleton for a new region: copy it, fill in the header, derive the `TODO`s |
-| `lexington.yaml`, `boston.yaml` | worked regions: `extends: default.yaml` plus their header, data paths, and (for Lexington) the derived values |
-
-For a new town:
+**`bikelane.yaml`** — the project file. Copy the template once, write the
+town, and every command reads it from the current directory. It is
+git-ignored: it describes *your* run on *your* machine, not the package.
 
 ```bash
-cp configs/_template.yaml configs/mytown.yaml
+cp bikelane.example.yaml bikelane.yaml
+```
+```yaml
+city: Boston
+state: MA
+# data_root: ./data      # default; everything is created under it — set an absolute
+#                        # path if the data should live on another disk
 ```
 
-and fill in the header:
+`city` is the town name as in the Census county subdivisions (that is what
+the imagery download uses); it becomes the region tag (`Fall River` →
+`FALL_RIVER`) in every output path. `state` is the two-letter code. The
+projected CRS defaults to the town's UTM zone (`crs:` to override). A
+relative `data_root` is relative to the project file, so the layout is the
+same whichever directory you run from.
+
+**`bikelane_extract/default.yaml`** — every parameter, shipped inside the
+package with the values fixed during development (Lexington, MA, 2026).
+Not edited. To see what is in effect for the current project:
+
+```bash
+bikelane config
+```
+
+### Changing something
+
+Any key from `default.yaml` can be overridden in `bikelane.yaml`, and so
+can any output directory — which is how you use data that already exists
+somewhere else instead of re-creating it:
 
 ```yaml
-extends: default.yaml
-
-region: MYTOWN             # upper-case tag; appears in every output filename (lower-cased)
-city: My Town              # town name as it appears in Census county subdivisions (stage 0)
+city: Boston
 state: MA
-crs: "EPSG:32619"          # projected CRS in metres — the UTM zone of your region
-data_root: /data/bikelane  # where everything is written by default
+paths:
+  tiles_dir:         /existing/Aerial_Images/BOSTON/BOSTON_Tiled
+  tile_mappings_csv: /existing/Aerial_Images/BOSTON/Tile_Mappings.csv
+join:
+  radius_m: 1.5
+centerlines:
+  chunk_tiles: 4           # laptop
 ```
 
-Only four parameter groups are region-dependent and left as `TODO` — the
-sign acceptance threshold, the join radius, and the gap-scan tolerances.
-Section 7 walks through deriving them with the `--sweep` commands.
-Everything else comes from `default.yaml` and does not normally change.
+For a one-off, override on the command line without touching the file:
+
+```bash
+bikelane join match --set join.radius_m=1.5
+bikelane predict --city "Fall River" --state MA      # another town, same project
+bikelane predict -c /path/to/other/bikelane.yaml     # another project file
+```
+
+Every stage run writes the configuration it actually used to
+`<data_root>/logs/<REGION>/config_<stage>_<timestamp>.yaml`, so a result
+can always be traced back to its parameters.
 
 ### Where files go
 
-By default every stage reads and writes under `data_root`:
+Everything is under `data_root`:
 
 ```
 <data_root>/
-  imagery/<REGION>/Merged_<REGION>.tif     stage 0
-  imagery/<REGION>/tiles/*.jpg             stage 0
-  imagery/<REGION>/Tile_Mappings.csv       stage 0
-  predictions/<REGION>/*_pred.png          stage 3
-  centerlines/<REGION>/chunks/*.npz        stage 4 (cache)
+  weights/                                  bikelane weights
+  imagery/<REGION>/Merged_<REGION>.tif      stage 0
+  imagery/<REGION>/tiles/*.jpg              stage 0
+  imagery/<REGION>/Tile_Mappings.csv        stage 0
+  predictions/<REGION>/*_pred.png           stage 3
+  centerlines/<REGION>/chunks/*.npz         stage 4 (cache)
   centerlines/<REGION>/centerlines_<region>_{voronoi,final}.geojson
   signs/<REGION>/<region>_bikesigns*.{csv,geojson}
   bikelanes/<REGION>/<region>_bikelanes*.geojson, gap_*.geojson, intersection_links.geojson
   osm/<REGION>/<region>_osm_{nodes,edges}.geojson
-  logs/<REGION>/
-  opensatmap/, train/                      stages 1–2 (not per region)
+  logs/<REGION>/                            run logs + config snapshots
+  opensatmap/, train/                       stages 1–2 (not per town)
 ```
 
-If your data already lives somewhere else, override any directory in
-`paths:` and nothing has to move:
-
-```yaml
-paths:
-  tiles_dir:         /existing/Aerial_Images/LEXINGTON/LEXINGTON_Tiled
-  tile_mappings_csv: /existing/Aerial_Images/LEXINGTON/Tile_Mappings.csv
-  predictions_dir:   /existing/predictions/LEXINGTON
-```
-
-To clear all inherited overrides in a child config, write `paths: null`.
-
-### Inheritance and `TODO`
-
-A config can `extends:` another one; mappings merge recursively and the
-child's scalars win, `null` deletes an inherited key. Region-dependent
-parameters are the literal string `TODO` in `default.yaml`. **A stage
-refuses to run while a parameter it uses is `TODO`**, and names it. A
-region config becomes complete once it overrides all of them.
+Any of these directories can be overridden under `paths:` in
+`bikelane.yaml`, so an existing layout does not have to be moved.
 
 ### Parameter sections
 
 | YAML key | Used by | What it controls |
 |----------|---------|------------------|
 | `imagery` | stage 0 | tile overlap (0.25), empty-tile threshold (0.50), index/town years |
-| `prepare` | stage 1 | OpenSatMap zip prefix, annotation file, image/clip sizes |
+| `prepare` | stage 1 | OpenSatMap source, zip prefix, annotation file, image/clip sizes |
 | `train` | stages 2, 3 | encoder, classes, mask dilation, batch, epochs, learning rate |
 | `predict` | stage 3 | batch size |
 | `centerlines` | stage 4 | chunk size, `voronoi` (mask → centerline), `graph`, `clean` |
-| `signs` | stage 5 | inference confidence, **per-class acceptance threshold**, isolation radius |
-| `join` | stage 6 | **match radius**, cleaning tolerances, opposite-direction handling |
+| `signs` | stage 5 | inference confidence, per-class acceptance threshold, isolation radius |
+| `join` | stage 6 | match radius, cleaning tolerances, opposite-direction handling |
 | `osm` | `osm` | network type (`drive`), buffer, junction degree |
-| `gaps` | stage 7 | **gap ceiling / angle / lateral tolerances** for `scan` and `intersections`, intersection test, OSM node snap distance |
-| `weights` | stages 3, 5 | paths to the two weight files |
+| `gaps` | stage 7 | gap ceiling / angle / lateral tolerances for `scan` and `intersections`, intersection test, OSM node snap distance |
+| `weights` | stages 3, 5 | paths to the two weight files (relative → `<data_root>/weights/`) |
 
-Bold items are the region-dependent ones.
+Four groups are marked *region-sensitive* in `default.yaml` — the sign
+acceptance threshold, the join radius, and the gap-scan tolerances. They
+were chosen on a suburban town and are reasonable defaults elsewhere, but
+section 7 shows how to check them with the built-in sweeps if the setting
+is very different (dense downtown, other imagery).
 
 ---
 
@@ -299,42 +237,42 @@ assets**, not in the repository:
 | `weights/yolo26m_bikesign.pt` | YOLO, 3 classes: `BikeOnly`, `Sharrow`, `OnlyBikeBus`. ~45 MB | stage 5 |
 
 ```bash
-bikelane weights -c configs/lexington.yaml            # downloads both into weights/
-bikelane weights -c configs/lexington.yaml --tag v0.1.0
+bikelane weights            # → <data_root>/weights/, shared by all towns
+bikelane weights --tag v0.1.0
 ```
 
 If you trained your own segmentation model (stage 2), copy its `best.pt` to
-the `weights.seg` path in the config. The YOLO detector is distributed as
+`<data_root>/weights/seg_unet_r34.pt` (or set `weights.seg` in `bikelane.yaml`). The YOLO detector is distributed as
 weights only; its training data is not part of this repository.
 
 ---
 
 ## 5. Running the pipeline, stage by stage
 
-All examples use `-c configs/lexington.yaml`; substitute your config.
+All examples assume `bikelane.yaml` names the town (section 3).
 Long stages are marked **(long)** — run them inside `tmux` or `screen`.
 
 ### Stage 0 — imagery: `fetch` and `tile`
 
 **Skip this stage if you already have 1024 px tiles named `tile_px<X>_py<Y>.jpg`
 and a `Tile_Mappings.csv`** (columns `image_name, CRS_X, CRS_Y, Pixel_X, Pixel_Y`).
-Point `paths.tiles_dir` and `paths.tile_mappings_csv` at them.
+Point `paths.tiles_dir` and `paths.tile_mappings_csv` at them in `bikelane.yaml`.
 
-`fetch` needs the MassDOT orthophoto index shapefile (`COQ2025INDEX_POLY.shp`,
-from MassGIS) at `paths.massdot_index_shp`. It finds the tiles that intersect
-the town's bounding box, downloads the zips, extracts the `.jp2` files and
-builds a single LZW-compressed BigTIFF mosaic.
+`fetch` downloads the MassGIS 2025 orthophoto index shapefile on first use,
+finds the tiles that intersect the town's bounding box, downloads their
+zips, extracts the `.jp2` files and builds a single LZW-compressed BigTIFF
+mosaic. Nothing has to be placed by hand.
 
 ```bash
-bikelane fetch -c configs/lexington.yaml --check
-bikelane fetch -c configs/lexington.yaml            # (long) ~44 zips for Lexington
+bikelane fetch --check
+bikelane fetch            # (long) ~44 zips for Lexington
 ```
 
 `tile` cuts the mosaic into overlapping 1024 px JPGs and writes the mapping CSV.
 
 ```bash
-bikelane tile -c configs/lexington.yaml --check
-bikelane tile -c configs/lexington.yaml [--workers 16]
+bikelane tile --check
+bikelane tile [--workers 16]
 ```
 
 Expected: several thousand tiles; tiles that are ≥ 50 % nodata are dropped
@@ -349,12 +287,12 @@ Uses the OpenSatMap dataset (level 20, 0.15 m/px; CC BY-NC-SA 4.0 — check
 the licence fits your use) and the OpenSatMap `tools-release` scripts.
 
 ```bash
-bikelane prepare -c configs/lexington.yaml --check
-bikelane prepare -c configs/lexington.yaml download  # (long) ~50 GB from Hugging Face + git clone of the tools
-bikelane prepare -c configs/lexington.yaml unzip     # concatenate parts and extract
-bikelane prepare -c configs/lexington.yaml bake      # (long) masks + split + 1024 px cut
-bikelane prepare -c configs/lexington.yaml images    # image tiles matching the GT tiles
-bikelane prepare -c configs/lexington.yaml verify    # image : GT tile counts must be 1:1
+bikelane prepare --check
+bikelane prepare download  # (long) ~50 GB from Hugging Face + git clone of the tools
+bikelane prepare unzip     # concatenate parts and extract
+bikelane prepare bake      # (long) masks + split + 1024 px cut
+bikelane prepare images    # image tiles matching the GT tiles
+bikelane prepare verify    # image : GT tile counts must be 1:1
 ```
 
 `download` fetches `20picstrainvaltest.zip.001…012` and `annotrainval20.json`
@@ -374,10 +312,10 @@ Outputs under `<prep_work_dir>/picuse20save/final/`:
 ### Stage 2 — `train` (only if training your own model)
 
 ```bash
-bikelane train -c configs/lexington.yaml --check
-bikelane train -c configs/lexington.yaml                    # (long) 30 epochs, batch 8
-bikelane train -c configs/lexington.yaml --resume           # continue from last.pt
-bikelane train -c configs/lexington.yaml --epochs 5         # smoke test
+bikelane train --check
+bikelane train                    # (long) 30 epochs, batch 8
+bikelane train --resume           # continue from last.pt
+bikelane train --epochs 5         # smoke test
 ```
 
 Per epoch it prints loss and IoU for lane / curb / virtual. Checkpoints go
@@ -392,9 +330,9 @@ cp <ckpt_dir>/best.pt weights/seg_unet_r34.pt
 ### Stage 3 — `predict`
 
 ```bash
-bikelane predict -c configs/lexington.yaml --check
-bikelane predict -c configs/lexington.yaml [--device cuda:0]
-bikelane predict -c configs/lexington.yaml --summary    # stats on existing predictions only
+bikelane predict --check
+bikelane predict [--device cuda:0]
+bikelane predict --summary    # stats on existing predictions only
 ```
 
 Writes one `<tile stem>_pred.png` per tile (uint8, 0 = background, 1 = lane
@@ -411,11 +349,11 @@ JPGs in QGIS (same stem) — red should sit on painted lines.
 Three steps; `all` runs them in sequence.
 
 ```bash
-bikelane centerlines -c configs/lexington.yaml --check extract
-bikelane centerlines -c configs/lexington.yaml extract --limit 3   # smoke test: 3 chunks
-bikelane centerlines -c configs/lexington.yaml extract             # (long)
-bikelane centerlines -c configs/lexington.yaml graph
-bikelane centerlines -c configs/lexington.yaml clean
+bikelane centerlines --check extract
+bikelane centerlines extract --limit 3   # smoke test: 3 chunks
+bikelane centerlines extract             # (long)
+bikelane centerlines graph
+bikelane centerlines clean
 ```
 
 `extract` merges 6×6 tiles onto one canvas at a time, extracts the
@@ -445,10 +383,10 @@ handled in stage 7.
 ### Stage 5 — `signs`
 
 ```bash
-bikelane signs -c configs/lexington.yaml --check detect
-bikelane signs -c configs/lexington.yaml detect              # (long) YOLO on every tile
-bikelane signs -c configs/lexington.yaml filter --sweep      # threshold table
-bikelane signs -c configs/lexington.yaml filter
+bikelane signs --check detect
+bikelane signs detect              # (long) YOLO on every tile
+bikelane signs filter --sweep      # threshold table
+bikelane signs filter
 ```
 
 `detect` runs the YOLO model at a *low* confidence (0.25) and saves every
@@ -473,10 +411,10 @@ Lexington all five detections were false positives.
 ### Stage 6 — `join`
 
 ```bash
-bikelane join -c configs/lexington.yaml --check match
-bikelane join -c configs/lexington.yaml match --sweep     # radius table
-bikelane join -c configs/lexington.yaml match [--radius 2.0]
-bikelane join -c configs/lexington.yaml clean
+bikelane join --check match
+bikelane join match --sweep     # radius table
+bikelane join match [--radius 2.0]
+bikelane join clean
 ```
 
 `match` attaches every accepted sign to all centerlines within
@@ -508,8 +446,8 @@ Outputs: `<region>_bikelanes.geojson`, `<region>_unmatched_signs.geojson`,
 ### `osm` — junction nodes for stage 7
 
 ```bash
-bikelane osm -c configs/lexington.yaml --check
-bikelane osm -c configs/lexington.yaml
+bikelane osm --check
+bikelane osm
 ```
 
 Downloads the OSM `drive` network for the tile extent (+200 m), projects it
@@ -527,11 +465,11 @@ intersection nodes are then less accurate.
 Three steps, in order.
 
 ```bash
-bikelane gaps -c configs/lexington.yaml scan --sweep   # candidate count vs gap ceiling
-bikelane gaps -c configs/lexington.yaml scan
+bikelane gaps scan --sweep   # candidate count vs gap ceiling
+bikelane gaps scan
 #   → open <region>_gap_join.geojson and _gap_crossing.geojson in QGIS
-bikelane gaps -c configs/lexington.yaml join
-bikelane gaps -c configs/lexington.yaml intersections
+bikelane gaps join
+bikelane gaps intersections
 ```
 
 `scan` finds pairs of bike-lane endpoints that face each other within
@@ -609,68 +547,61 @@ bike-lane endpoint to an intersection node: `node_kind` (`osm_junction` /
 
 ---
 
-## 7. Adapting to a new region
+## 7. Running a new town, and when to re-check parameters
 
-1. **Config.** Copy `configs/_template.yaml` → `configs/<region>.yaml`. Set
-   `region`, `city`, `state`, `crs` (the UTM zone in metres), `data_root`,
-   and any `paths:` overrides. The region-dependent parameters are already
-   `TODO`.
-2. **Imagery** (stage 0) — MassDOT-specific. For other imagery, produce the
-   tiles and `Tile_Mappings.csv` yourself (see the format under Stage 0) and
-   point the config at them. Tiles must be 1024 px, filename
-   `tile_px<X>_py<Y>.jpg`, with `<X>,<Y>` the pixel offset of the tile's
-   top-left corner in a common mosaic.
-3. **Predict, centerlines** — no region parameters, run as is. Check the
-   `clean` numbers as described in Stage 4.
-4. **`signs.conf_keep`** — run `signs filter --sweep`, pick the threshold at
-   the isolated-share minimum. Dense urban areas may also need a smaller
-   `signs.neighbor_r_m`.
-5. **`join.radius_m`** — run `join match --sweep`, pick the largest radius
-   before lines-per-sign jumps.
-6. **`gaps.scan.gap_max_m` / `ang` / `lat_max_m`** — run `gaps scan --sweep`,
-   set the ceiling where the count flattens, then inspect every candidate in
-   QGIS before `gaps join`.
+Change two lines in `bikelane.yaml` and run the stages in order:
 
-Fill the derived values into the config (replacing `TODO`) so the run is
-reproducible.
+```yaml
+city: Fall River
+state: MA
+```
+
+```bash
+bikelane weights
+bikelane fetch
+bikelane tile
+bikelane predict
+bikelane centerlines all
+bikelane signs detect
+bikelane signs filter
+bikelane join match
+bikelane join clean
+bikelane osm
+bikelane gaps scan          # look at the candidates in QGIS
+bikelane gaps join
+bikelane gaps intersections
+```
+
+For imagery other than MassDOT, skip `fetch`/`tile`, produce 1024 px tiles
+named `tile_px<X>_py<Y>.jpg` plus a `Tile_Mappings.csv` (format under Stage
+0) yourself, and point `paths.tiles_dir` / `paths.tile_mappings_csv` at
+them in `bikelane.yaml`.
+
+The defaults were chosen on a suburban town. Three of them depend on how
+dense the symbols are and how the streets are shaped, and each stage has a
+`--sweep` that shows whether the default still fits. Run them when the
+setting is clearly different; otherwise the defaults are fine.
+
+| parameter | default | check with | change it when |
+|---|---|---|---|
+| `signs.conf_keep` | 0.60 | `signs filter --sweep` | the isolated-share minimum is clearly not at 0.60 |
+| `join.radius_m` | 2.0 m | `join match --sweep` | lines-per-sign is already above ~1.1 at 2.0 m (narrow lanes) |
+| `gaps.scan.gap_max_m / ang / lat_max_m` | 25 m / 12° / 1 m | `gaps scan --sweep`, then the candidates in QGIS | candidates leave the pavement or cut between parallel lines |
+
+Apply a change in `bikelane.yaml` or with `--set key=value`; the config
+snapshot in `logs/` records what was used.
 
 ---
 
 ## 8. Troubleshooting
 
-**`venv` or `pip install -e` fails with `Input/output error` or `Operation not permitted`**: the repository is likely on a mounted or network filesystem that does not support one of the filesystem operations required by Python `venv` or setuptools.
-
-The repository itself does not need to move. Create the virtual environment on a local filesystem such as `$HOME`:
-
-```bash
-mkdir -p ~/.venvs
-python3 -m venv ~/.venvs/bikelane
-source ~/.venvs/bikelane/bin/activate
-```
-
-If `pip install -e ".[all]"` fails while creating `bikelane_extract.egg-info`, install from a temporary local copy and use `PYTHONPATH` to load the working tree:
-
-```bash
-rm -rf /tmp/bikelane-install-src
-cp -a . /tmp/bikelane-install-src
-python -m pip install "/tmp/bikelane-install-src[all]"
-
-export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-```
-
-Verify the source being imported:
-
-```bash
-python - <<'PY'
-import bikelane_extract
-print(bikelane_extract.__file__)
-PY
-```
-
-The virtual environment does not need to live inside the repository. You can still run `pip install -e ".[all]"` from the repository root.
-
-**`config error: '<key>' is TODO …`** — the parameter must be derived for
-this region (section 7) and written into the config.
+**`ImportError: … libstdc++.so.6: version GLIBCXX_… not found`, or a
+traceback that imports from `/usr/lib/python3/dist-packages` instead of your
+venv** — `PYTHONPATH` or `LD_LIBRARY_PATH` is pulling in system/conda
+packages ahead of the venv (common on machines with QGIS or Anaconda). Run
+`unset PYTHONPATH LD_LIBRARY_PATH` and check
+`python -c "import shapely; print(shapely.__file__)"` points into the venv;
+add the `unset` line to the end of `<venv>/bin/activate` to make it stick.
 
 **`stage '<x>' needs an optional dependency: <module>`** — install the extra
 listed in section 2, e.g. `pip install -e ".[signs]"`.
@@ -716,8 +647,8 @@ renamed with a timestamp rather than overwritten.
 
 ```
 bikelane_extract/
-  cli.py            entry point: `bikelane <stage> -c <config>`
-  config.py         YAML loading, `extends:`, path resolution, TODO guard
+  cli.py            entry point: `bikelane <stage>`; reads ./bikelane.yaml
+  config.py         default.yaml + bikelane.yaml + --set, path resolution, run snapshots
   io.py             GeoJSON read/write with backup, tile↔UTM mapping, sign CSV
   geom.py           polyline geometry shared by stages 4, 6, 7
   facility.py       facility-type vocabulary (BikeOnly / Sharrow / OnlyBikeBus)
@@ -732,12 +663,9 @@ bikelane_extract/
   s07_gaps/         scan.py, join.py, intersections.py, common.py, run.py
   osm.py            OSM drive network + junction nodes
   weights.py        download release weights
-configs/
-  default.yaml      all region-independent parameters; region-dependent ones TODO
-  _template.yaml    copy for a new region
-  _local_example.yaml  laptop settings (smaller chunks/batches, MPS)
-  lexington.yaml    worked example with derived values
-  boston.yaml       header + paths only; TODOs still to derive
+  default.yaml      ALL parameters (not edited)
+bikelane.example.yaml   template for the project file
+bikelane.yaml           your copy (git-ignored): city, state, and any overrides — the only file you edit
 pyproject.toml
 ```
 

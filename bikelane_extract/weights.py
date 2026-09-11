@@ -1,8 +1,9 @@
-"""weights — fetch released model weights into weights/.
+"""weights — fetch released model weights into <data_root>/weights/.
 
-    bikelane weights -c configs/lexington.yaml [--tag v0.1.0]
+    bikelane weights [--tag v0.1.0]
 
 Weights are GitHub Release assets, not committed to the repo (seg U-Net ~94 MB).
+They are shared by every town under the same data_root.
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import urllib.request
 
 from .config import Config
 
-RELEASE_REPO = "ssynn/bikelane-extract"      # TODO set once the repo exists
+RELEASE_REPO = "Synn-Arch/bikelane-extract"      # TODO set once the repo exists
 
 
 def run(cfg: Config, argv=None, check: bool = False):

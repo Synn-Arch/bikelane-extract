@@ -99,5 +99,5 @@ def run(cfg: Config, argv=None, check: bool = False, sweep: bool = False):
           f"{len(crossing)} through an intersection ({gx.sum():.0f} m)")
     _dump(cfg.path("gap_join"), joinable, cfg.crs)
     _dump(cfg.path("gap_crossing"), crossing, cfg.crs)
-    print("  → look at every candidate (QGIS over the orthophoto) before `gaps join`")
+    print("  → look at every candidate (QGIS over the orthophoto) before `bikelane gaps join`")
     return joinable, crossing

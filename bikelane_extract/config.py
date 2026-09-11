@@ -1,16 +1,14 @@
-"""Region configuration.
+"""Configuration.
 
-A config is a YAML file (see configs/). It may `extends:` another YAML, in
-which case mappings are merged recursively and scalars in the child win.
+Two files:
+  bikelane_extract/default.yaml   every parameter, shipped with the package; not edited
+  ./bikelane.yaml                 the project file: city, state, data_root, and any
+                                  overrides (paths to existing data, parameter changes)
 
-Every stage reads its parameters through `cfg.get("stage.key")` and its
-files through `cfg.path(...)`. Paths default to `<data_root>/<subdir>/<REGION>/`
-but any entry in `paths:` overrides that, so an existing on-disk layout does
-not have to be moved.
-
-Values set to the string "TODO" are placeholders for region-specific
-parameters that have not been re-derived yet; `cfg.get()` raises on them so
-a stage cannot silently run on another region's numbers.
+`bikelane <stage>` reads ./bikelane.yaml from the current directory (or the
+file given with -c). --city/--state/--data-root/--set on the command line
+override it for one run. The effective configuration of every run is
+snapshotted to <data_root>/logs/<REGION>/ for reproducibility.
 """
 from __future__ import annotations
 
@@ -24,7 +22,7 @@ TODO = "TODO"
 
 
 class TodoParameter(ValueError):
-    pass
+    """A value is the placeholder string TODO (only possible in user overrides)."""
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -41,14 +39,29 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+PACKAGE_DEFAULT = Path(__file__).with_name("default.yaml")
+PROJECT_FILE = "bikelane.yaml"
+
+
+def _resolve_parent(parent: str, child: Path) -> Path:
+    """`extends: default` (or default.yaml) → the package default; else relative to the child."""
+    if parent in ("default", "default.yaml") and not (child.parent / parent).exists():
+        return PACKAGE_DEFAULT
+    return (child.parent / parent).resolve()
+
+
 def _load_yaml(path: Path) -> dict:
     with open(path) as f:
         data = yaml.safe_load(f) or {}
     parent = data.pop("extends", None)
     if parent:
-        parent_path = (path.parent / parent).resolve()
-        data = _merge(_load_yaml(parent_path), data)
+        data = _merge(_load_yaml(_resolve_parent(parent, path)), data)
     return data
+
+
+def region_slug(city: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9]+", "_", city).strip("_").upper()
 
 
 # subdir under data_root for each logical location
@@ -88,6 +101,8 @@ _FILES = {
     "bikelanes_joined":    ("bikelanes_dir", "{region}_bikelanes_joined.geojson"),
     "bikelanes_final":     ("bikelanes_dir", "{region}_bikelanes_final.geojson"),
     "intersection_links":  ("bikelanes_dir", "{region}_intersection_links.geojson"),
+    "network_edges":       ("bikelanes_dir", "{region}_network_edges.geojson"),
+    "network_nodes":       ("bikelanes_dir", "{region}_network_nodes.geojson"),
     "osm_nodes":           ("osm_dir", "{region}_osm_nodes.geojson"),
     "osm_edges":           ("osm_dir", "{region}_osm_edges.geojson"),
 }
@@ -106,9 +121,69 @@ class Config:
 
     # ── loading ──
     @classmethod
+    def from_args(cls, city: str | None, state: str | None, data_root: str | Path = "./data",
+                  crs: str | None = None, overrides: dict | None = None,
+                  overrides_file: str | Path | None = None) -> "Config":
+        data = _load_yaml(PACKAGE_DEFAULT)
+        source = PACKAGE_DEFAULT
+        if overrides_file is None and Path(PROJECT_FILE).exists():
+            overrides_file = PROJECT_FILE
+        if overrides_file:
+            of = Path(overrides_file).expanduser().resolve()
+            proj = _load_yaml(of)
+            # relative paths in the project file are relative to the file, not the cwd
+            if "data_root" in proj and not Path(proj["data_root"]).expanduser().is_absolute():
+                proj["data_root"] = str(of.parent / proj["data_root"])
+            data = _merge(data, proj)
+            source = of
+        if city:
+            data["city"] = city
+            data["region"] = region_slug(city)
+        if state:
+            data["state"] = state.upper()
+        if "boundary" in data:                       # an area given by a polygon file
+            b = Path(data["boundary"]).expanduser()
+            if not b.is_absolute() and overrides_file:
+                b = Path(overrides_file).expanduser().resolve().parent / b
+            data["boundary"] = str(b)
+            data.setdefault("region", region_slug(data.get("name") or b.stem))
+        elif "city" in data and "region" not in data:
+            data["region"] = region_slug(data["city"])
+        if "region" not in data:
+            raise SystemExit(f"no area set: `cp bikelane.example.yaml {PROJECT_FILE}` and write "
+                             f"`city:`/`state:` (one town) or `boundary:` (any polygon file) in it")
+        if data_root:
+            data["data_root"] = str(Path(data_root).expanduser().resolve())
+        data.setdefault("data_root", str(Path("./data").resolve()))
+        if crs:
+            data["crs"] = crs
+        elif "crs" not in data:
+            data["crs"] = _cached_crs(Path(data["data_root"]), data["region"],
+                                      data.get("city"), data.get("state", ""),
+                                      data.get("imagery", {}).get("towns_year"),
+                                      data.get("boundary"))
+        for k, v in (overrides or {}).items():
+            node = data
+            parts = k.split(".")
+            for part in parts[:-1]:
+                node = node.setdefault(part, {})
+            node[parts[-1]] = v
+        return cls(data, source=source)
+
+    @classmethod
     def load(cls, path: str | Path) -> "Config":
+        """A standalone overrides yaml that also sets city/region (defaults merged in)."""
         path = Path(path).expanduser().resolve()
-        return cls(_load_yaml(path), source=path)
+        return cls(_merge(_load_yaml(PACKAGE_DEFAULT), _load_yaml(path)), source=path)
+
+    def snapshot(self, stage: str) -> Path:
+        """Write the effective configuration next to the logs, once per stage run."""
+        import time
+        d = self.path("logs_dir", mkdir=True)
+        p = d / f"config_{stage}_{time.strftime('%Y%m%d-%H%M%S')}.yaml"
+        with open(p, "w") as f:
+            yaml.safe_dump(self._d, f, sort_keys=False, allow_unicode=True)
+        return p
 
     # ── parameters ──
     def get(self, dotted: str, default: Any = ...) -> Any:
@@ -121,11 +196,7 @@ class Config:
                 raise KeyError(f"config has no '{dotted}' ({self.source})")
             node = node[part]
         if node == TODO:
-            raise TodoParameter(
-                f"'{dotted}' is TODO in {self.source.name if self.source else 'config'}: "
-                f"it is region-dependent and must be derived for {self.region} "
-                f"(see README §7 for the --sweep that sets it)"
-            )
+            raise TodoParameter(f"'{dotted}' is TODO in {self.source} — give it a value")
         if isinstance(node, dict):
             _check_no_todo(node, dotted)
         return node
@@ -159,11 +230,9 @@ class Config:
         return p
 
     def weights(self, which: str) -> Path:
+        """Relative weight paths live under data_root (weights/…)."""
         w = Path(self.get(f"weights.{which}")).expanduser()
-        if not w.is_absolute():
-            root = self.source.parent.parent if self.source else Path.cwd()
-            w = root / w
-        return w
+        return w if w.is_absolute() else self.data_root / w
 
     def __repr__(self):
         return f"Config({self.region}, {self.source})"
@@ -175,3 +244,65 @@ def _check_no_todo(node: dict, prefix: str) -> None:
             raise TodoParameter(f"'{prefix}.{k}' is TODO — re-derive it for this region")
         if isinstance(v, dict):
             _check_no_todo(v, f"{prefix}.{k}")
+
+
+def _cached_crs(data_root: Path, region: str, city, state: str, year=None, boundary=None) -> str:
+    """UTM zone of the area, derived once and remembered in <data_root>/logs/<REGION>/crs.txt."""
+    f = data_root / "logs" / region / "crs.txt"
+    if f.exists():
+        return f.read_text().strip()
+    crs = (_utm_for_boundary(boundary) if boundary else _utm_for(city, state, year)) or "EPSG:32619"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(crs + "\n")
+    return crs
+
+
+def _utm_of_lonlat(x: float, y: float) -> str:
+    zone = int((x + 180) // 6) + 1
+    return f"EPSG:{(32600 if y >= 0 else 32700) + zone}"
+
+
+def _utm_for_boundary(path) -> str | None:
+    try:
+        import geopandas as gpd
+        g = gpd.read_file(path)
+        c = g.geometry.to_crs(3857).union_all().centroid if hasattr(g.geometry, "union_all") \
+            else g.geometry.to_crs(3857).unary_union.centroid
+        c = gpd.GeoSeries([c], crs=3857).to_crs(4326).iloc[0]
+        return _utm_of_lonlat(c.x, c.y)
+    except Exception:
+        return None
+
+
+def _utm_for(city, state: str, year=None) -> str | None:
+    if not city:
+        return None
+    try:
+        import contextlib
+        import io
+        import warnings
+        import pygris
+        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+            warnings.simplefilter("ignore")
+            towns = pygris.county_subdivisions(state=state, year=year, cache=True)
+        t = towns[towns["NAME"].str.lower() == city.lower()]
+        if t.empty:
+            return None
+        c = t.geometry.to_crs(3857).centroid.to_crs(4326).iloc[0]   # planar centroid, then lon/lat
+        return _utm_of_lonlat(c.x, c.y)
+    except Exception:
+        return None
+
+
+def parse_value(v: str):
+    """'2.0' → 2.0, 'true' → True, 'TODO' stays a string."""
+    if v.lower() in ("true", "false"):
+        return v.lower() == "true"
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        return v
