@@ -1,5 +1,9 @@
 # BikeTrace
 
+<p align="center">
+  <img src="misc/overview.png" alt="Overview: aerial imagery tiles to lane centerlines, bicycle-symbol detection, and network construction" width="80%">
+</p>
+
 **BikeTrace** (`bikelane-extract`) maps on-street bike facilities — dedicated
 bike lanes and sharrows (shared-lane markings) — from high-resolution aerial
 imagery. A U-Net segments the painted lane markings on every tile, the
@@ -33,8 +37,9 @@ inferred. Developed on MassDOT 15 cm imagery of Lexington and Boston, MA.
 
 1. [Requirements](#requirements)
 2. [Installation](#installation)
-3. [Get the imagery](#get-the-imagery)
-4. [Run Your Project](#run-your-project)
+3. [Run Our Example](#run-our-example)
+4. [Get the imagery](#get-the-imagery)
+5. [Run Your Project](#run-your-project)
 
 ### Requirements
 
@@ -87,6 +92,27 @@ python download.py               # → run/src/seg_unet_r34.pt, run/src/yolo26m_
 ```
 
 Manual alternative: download both `.pt` files from the release page into `run/src/`.
+
+<br>
+
+### Run Our Example
+
+`example/input/` holds a block of MassGIS 2025 tiles for each of the two
+reference towns, Lexington (suburban) and Boston (dense downtown), with our
+results in `example/output/provided/`. From `bicyclist_network/`:
+
+```bash
+bikelane config      -c example/lexington.yaml       # paths, CRS, weights — everything found?
+bikelane predict     -c example/lexington.yaml       # then the remaining stages, see example/README.md
+# … or all stages at once:
+cp example/lexington.yaml bikelane.yaml && bash run/run_all.sh
+```
+
+Your run goes to `example/output/bikelanes/LEXINGTON/`, next to
+`provided/LEXINGTON/`, so the two can be compared. See
+[example/README.md](example/README.md).
+
+<p align="center"><img src="misc/example_lexington.png" alt="Extracted bicycle facilities, Lexington, MA (shared lanes orange, bike-only lanes blue)" width="60%"></p>
 
 <br>
 
@@ -159,11 +185,12 @@ bash run/run_all.sh                  # log: <data_root>/logs/run_all_<REGION>.lo
 **3. Outputs** (`<data_root>/`, GeoJSON in the imagery CRS, metres):
 
 ```
-bikelanes/<REGION>/
-├── <region>_network_edges.geojson    the network: type, n_signs, obs_ratio, from_node, to_node …
-├── <region>_network_nodes.geojson    endpoints / intersections
-├── <region>_bikelanes_final.geojson  facility lines before the node layer
-└── <region>_gap_*.geojson            gap candidates, for review
+bikelanes/<REGION>/main/              THE THREE PRODUCTS
+├── <region>_bike_facilities.geojson  typed facility lines: type (BikeOnly | Sharrow), n_signs, obs_ratio …
+├── <region>_network_edges.geojson    facility lines + intersection connectors, shared node ids;
+│                                     type = BikeOnly | Sharrow | Intersection
+└── <region>_network_nodes.geojson    endpoints / intersections
+bikelanes/<REGION>/byproduct/         review layers: matched / unmatched symbols, gap candidates, links
 centerlines/<REGION>/                 all lane centerlines (not only bike lanes)
 signs/<REGION>/                       raw / accepted / dropped symbol detections
 predictions/<REGION>/                 per-tile class masks
@@ -190,6 +217,8 @@ bicyclist_network/
 ├── download.py              # fetch the released weights → run/src/
 ├── bikelane.example.yaml    # project-file template: the area, data_root, imagery_root, overrides
 ├── requirements.txt / pyproject.toml
+├── example/                 # sample tiles for Lexington and Boston + our results
+├── misc/                    # figures
 ├── run/                     # everything needed to run the tool
 │   ├── bikelane_extract/    #   the package behind the `bikelane` command (stages 1–5, osm, config)
 │   ├── src/                 #   model weights (+ SHA256SUMS)

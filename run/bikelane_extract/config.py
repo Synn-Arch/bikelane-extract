@@ -96,6 +96,8 @@ _DEFAULT_SUBDIR = {
     "chunks_dir":       "centerlines/{REGION}/chunks",
     "signs_dir":        "signs/{REGION}",
     "bikelanes_dir":    "bikelanes/{REGION}",
+    "main_dir":         "bikelanes/{REGION}/main",        # the three deliverables (stages 4-5)
+    "byproduct_dir":    "bikelanes/{REGION}/byproduct",   # intermediate / review layers (stages 4-5)
     "osm_dir":          "osm/{REGION}",
     "logs_dir":         "logs/{REGION}",
     # training data (region-independent; used by train/, not by the run stages)
@@ -116,16 +118,18 @@ _FILES = {
     "signs_raw_csv":       ("signs_dir", "{region}_bikesigns.csv"),
     "signs_filtered":      ("signs_dir", "{region}_bikesigns_filtered.geojson"),
     "signs_dropped":       ("signs_dir", "{region}_bikesigns_dropped.geojson"),
-    "bikelanes":           ("bikelanes_dir", "{region}_bikelanes.geojson"),
-    "bikelanes_unmatched": ("bikelanes_dir", "{region}_unmatched_signs.geojson"),
-    "bikelanes_clean":     ("bikelanes_dir", "{region}_bikelanes_clean.geojson"),
-    "gap_join":            ("bikelanes_dir", "{region}_gap_join.geojson"),
-    "gap_crossing":        ("bikelanes_dir", "{region}_gap_crossing.geojson"),
-    "bikelanes_joined":    ("bikelanes_dir", "{region}_bikelanes_joined.geojson"),
-    "bikelanes_final":     ("bikelanes_dir", "{region}_bikelanes_final.geojson"),
-    "intersection_links":  ("bikelanes_dir", "{region}_intersection_links.geojson"),
-    "network_edges":       ("bikelanes_dir", "{region}_network_edges.geojson"),
-    "network_nodes":       ("bikelanes_dir", "{region}_network_nodes.geojson"),
+    # main products — <bikelanes_dir>/main/
+    "bikelanes_final":     ("main_dir", "{region}_bike_facilities.geojson"),   # typed facility lines
+    "network_edges":       ("main_dir", "{region}_network_edges.geojson"),
+    "network_nodes":       ("main_dir", "{region}_network_nodes.geojson"),
+    # by-products — <bikelanes_dir>/byproduct/ (intermediate steps and review layers)
+    "bikelanes":           ("byproduct_dir", "{region}_bikelanes_match.geojson"),
+    "bikelanes_unmatched": ("byproduct_dir", "{region}_unmatched_signs.geojson"),
+    "bikelanes_clean":     ("byproduct_dir", "{region}_bikelanes_clean.geojson"),
+    "gap_join":            ("byproduct_dir", "{region}_gap_join.geojson"),
+    "gap_crossing":        ("byproduct_dir", "{region}_gap_crossing.geojson"),
+    "bikelanes_joined":    ("byproduct_dir", "{region}_bikelanes_joined.geojson"),
+    "intersection_links":  ("byproduct_dir", "{region}_intersection_links.geojson"),
     "osm_nodes":           ("osm_dir", "{region}_osm_nodes.geojson"),
     "osm_edges":           ("osm_dir", "{region}_osm_edges.geojson"),
 }
@@ -283,6 +287,8 @@ class Config:
                 p = self.path(dkey) / fname.format(region=self.region_lower)
         elif key in over:
             p = Path(over[key]).expanduser()
+        elif key in ("main_dir", "byproduct_dir") and "bikelanes_dir" in over:
+            p = self.path("bikelanes_dir") / key.replace("_dir", "")
         elif key in _IMAGERY_SUBDIR:
             p = self.imagery_root / _IMAGERY_SUBDIR[key].format(REGION=self.region)
         elif key in _REPO_DIRS:

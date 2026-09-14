@@ -84,4 +84,4 @@ for stage in "${STAGES[@]}"; do
   fi
 done
 echo "=== all stages done  $(( ($(date +%s) - t0) / 3600 )) h  ===" | tee -a "$LOG"
-echo "final: $DATA_ROOT/bikelanes/$REGION/$(echo "$REGION" | tr 'A-Z' 'a-z')_network_edges.geojson"
+echo "main products: $DATA_ROOT/bikelanes/$REGION/main/  (bike_facilities, network_edges, network_nodes)"

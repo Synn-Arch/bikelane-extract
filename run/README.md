@@ -208,8 +208,10 @@ run/src/                                  python download.py
   centerlines/<REGION>/chunks/*.npz         stage 2 (cache)
   centerlines/<REGION>/centerlines_<region>_{voronoi,final}.geojson
   signs/<REGION>/<region>_bikesigns*.{csv,geojson}
-  bikelanes/<REGION>/<region>_bikelanes*.geojson, gap_*.geojson, intersection_links.geojson,
-                     <region>_network_{edges,nodes}.geojson
+  bikelanes/<REGION>/main/       <region>_bike_facilities.geojson          stages 4-5: THE PRODUCTS
+                                 <region>_network_{edges,nodes}.geojson
+  bikelanes/<REGION>/byproduct/  <region>_bikelanes_{match,clean,joined}.geojson, _unmatched_signs,
+                                 _gap_{join,crossing}, _intersection_links   review / intermediate
   osm/<REGION>/<region>_osm_{nodes,edges}.geojson
   logs/<REGION>/                            run logs + config snapshots + crs.txt
   train/                                    training data and checkpoints (train/, not per region)
@@ -339,8 +341,8 @@ that pattern is a two-way facility with symbols on both sides
 (`join.clean.merge_opposite: true` to merge them anyway). Short lines are
 reported only; `drop_short: true` removes them.
 
-Outputs: `<region>_bikelanes.geojson`, `<region>_unmatched_signs.geojson`,
-`<region>_bikelanes_clean.geojson`.
+Outputs (`byproduct/`): `<region>_bikelanes_match.geojson`,
+`<region>_unmatched_signs.geojson`, `<region>_bikelanes_clean.geojson`.
 
 ### `osm` — junction nodes for stage 5
 
@@ -408,11 +410,14 @@ turning movements.
 layer with shared node ids (`edge_id`, `from_node`, `to_node`, `edge_type`
 facility | connector) and a node layer (`node_id`, `node_type` intersection |
 endpoint, `degree`). Endpoints within 0.2 m share a node; nothing is moved.
+In the edge layer one field, `type`, tells the three kinds of edge apart:
+`BikeOnly` / `Sharrow` for a facility, `Intersection` for a connector.
 
-Outputs: `<region>_bikelanes_joined.geojson` (after `join`),
-`<region>_bikelanes_final.geojson` and `<region>_intersection_links.geojson`
-(after `intersections`), **`<region>_network_edges.geojson`** and
-**`<region>_network_nodes.geojson`** (after `network`). Line and
+Outputs: `byproduct/<region>_bikelanes_joined.geojson` (after `join`),
+**`main/<region>_bike_facilities.geojson`** and
+`byproduct/<region>_intersection_links.geojson` (after `intersections`),
+**`main/<region>_network_edges.geojson`** and
+**`main/<region>_network_nodes.geojson`** (after `network`). Line and
 connected-component counts are printed.
 
 <br>
@@ -423,15 +428,20 @@ All vector outputs are GeoJSON in the region CRS (`crs` in the config; the
 imagery CRS, metres). Existing files are never overwritten: the previous
 version is renamed to `<name>.<unix time>.geojson` and the new one written.
 
-**Final products**
+**Main products** — `bikelanes/<REGION>/main/`, three files:
 
-`<region>_network_edges.geojson` — LineString features:
+`<region>_bike_facilities.geojson` — the typed facility lines after gap
+closing (LineStrings; `type`, `n_signs`, `classes`, `conf_max`, `length_m`,
+`n_joins`, `gap_total_m`, `obs_len_m`, `obs_ratio`).
+
+`<region>_network_edges.geojson` — the same lines plus the intersection
+connectors, as a graph. LineString features:
 
 | property | type | meaning |
 |---|---|---|
 | `edge_id`, `from_node`, `to_node` | int | graph topology, node ids from `_network_nodes` |
 | `edge_type` | str | `facility` (a bike lane) or `connector` (link into an intersection node) |
-| `type` | str | `BikeOnly` or `Sharrow` (majority of supporting symbols) |
+| `type` | str | `BikeOnly` or `Sharrow` (majority of supporting symbols) for a facility edge; `Intersection` for a connector |
 | `n_signs` | int | number of symbols supporting the line |
 | `classes` | JSON str | per-class symbol counts, e.g. `{"Sharrow": 3, "BikeOnly": 1}` |
 | `conf_max` | float | highest detector confidence among its symbols |
@@ -443,10 +453,11 @@ version is renamed to `<name>.<unix time>.geojson` and the new one written.
 (`intersection` if any connector ends there, else `endpoint`), `degree`,
 `node_kind`.
 
-`<region>_bikelanes_final.geojson` and `<region>_intersection_links.geojson`
-are the same content before the node ids were assigned.
-
-**Intermediate files worth keeping**
+**By-products** — `bikelanes/<REGION>/byproduct/` holds every intermediate
+layer of stages 4–5 (`_bikelanes_match`, `_unmatched_signs`, `_bikelanes_clean`,
+`_gap_join`, `_gap_crossing`, `_bikelanes_joined`, `_intersection_links`); the
+per-stage folders `predictions/`, `centerlines/`, `signs/`, `osm/` hold the
+rest. The ones worth keeping:
 
 | file | stage | use |
 |---|---|---|

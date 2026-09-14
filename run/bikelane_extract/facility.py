@@ -7,6 +7,9 @@ CLASSES = ("BikeOnly", "Sharrow", "OnlyBikeBus")
 # tie-break when a line carries equal counts of two classes
 TYPE_PRIORITY = {"BikeOnly": 0, "Sharrow": 1, "OnlyBikeBus": 2}
 
+# `type` of a connector edge in the network layer (facility edges carry a CLASSES value)
+INTERSECTION = "Intersection"
+
 
 def majority_type(classes: dict) -> str | None:
     if not classes:

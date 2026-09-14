@@ -1,11 +1,13 @@
 """gaps network — merge facility lines and intersection links into one edge layer
 with shared node ids, plus a node layer.
 
-Reads  <region>_bikelanes_final.geojson  +  <region>_intersection_links.geojson
-Writes <region>_network_edges.geojson   +  <region>_network_nodes.geojson
+Reads  main/<region>_bike_facilities.geojson  +  byproduct/<region>_intersection_links.geojson
+Writes main/<region>_network_edges.geojson    +  main/<region>_network_nodes.geojson
 
 Edges keep every facility attribute and gain:
   edge_id, from_node, to_node, edge_type ("facility" | "connector")
+  `type` tells the three kinds apart in one field: "BikeOnly" / "Sharrow" for
+  facility edges, "Intersection" for connector edges.
 Nodes:
   node_id, node_type ("intersection" if any connector ends there, else
   "endpoint"), degree, node_kind (osm_junction / midpoint, intersections only)
@@ -20,6 +22,7 @@ from collections import Counter
 import numpy as np
 
 from ..config import Config
+from ..facility import INTERSECTION
 from ..io import read_lines, write_lines, write_points
 
 
@@ -47,7 +50,7 @@ def build_network(fac_lines, fac_props, link_lines, link_props, snap_m=0.2):
         props.append(dict(edge_type="connector", from_node=a, to_node=b,
                           node_kind=p.get("node_kind"), node_snap_m=p.get("node_snap_m"),
                           gap_m=p.get("gap_m"), facility_line=p.get("line"),
-                          type=None, n_signs=0, obs_ratio=0.0))
+                          type=INTERSECTION, n_signs=0, obs_ratio=0.0))
         edges.append(ln)
     for i, q in enumerate(props):
         q["edge_id"] = i
@@ -83,3 +86,4 @@ def run(cfg: Config, check: bool = False):
           f"{nx.number_connected_components(G)} connected components")
     write_lines(out_e, edges, props, cfg.crs)
     write_points(out_n, node_xy, nodes, cfg.crs)
+    print(f"  main products → {out_e.parent}")

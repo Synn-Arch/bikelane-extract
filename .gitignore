@@ -2,6 +2,12 @@
 data/
 *.geojson
 
+# example: your own runs are not committed; the shipped inputs and results are
+example/output/*
+!example/output/provided/
+!example/output/provided/**
+example/input/*/example_input.json
+
 # model weights: distributed through GitHub Releases (python download.py → run/src/)
 run/src/*.pt
 
