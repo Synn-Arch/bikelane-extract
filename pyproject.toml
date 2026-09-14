@@ -25,23 +25,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# stage 0: MassDOT imagery download / mosaic / tiling
-imagery = ["geopandas", "pygris", "rasterio", "requests"]
-# stages 1-3: segmentation train / predict (torch install separately for your CUDA)
+# stage 1 predict (+ train/seg): segmentation model (install torch separately for your CUDA)
 seg = ["segmentation-models-pytorch", "huggingface_hub"]
-# stage 5: YOLO bike-sign detection
+# stage 3 signs (+ train/yolo): YOLO bike-sign detection
 signs = ["ultralytics"]
 # osm junction nodes (for gaps intersections)
 osm = ["osmnx>=1.9", "geopandas"]
+# CRS fallback when imagery_info.json is absent (town lookup / boundary centroid)
+area = ["geopandas", "pygris"]
 # diagnostic notebooks
 notebooks = ["matplotlib", "jupyter"]
-all = ["bikelane-extract[imagery,seg,signs,osm,notebooks]"]
+all = ["bikelane-extract[seg,signs,osm,area,notebooks]"]
+# imagery download + tiling is a separate tool: ../download_MassGIS2025AerialImagery/requirements.txt
 
 [project.scripts]
 bikelane = "bikelane_extract.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["bikelane_extract"]
+packages = ["run/bikelane_extract"]
 
 [tool.hatch.build.targets.sdist]
-include = ["bikelane_extract", "bikelane.example.yaml", "README.md", "pyproject.toml"]
+include = ["run/bikelane_extract", "bikelane.example.yaml", "README.md", "pyproject.toml"]

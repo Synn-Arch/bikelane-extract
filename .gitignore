@@ -1,8 +1,13 @@
-__pycache__/
-*.egg-info/
-weights/*.pt
+# data — nothing under these is source
 data/
 *.geojson
+
+# model weights: distributed through GitHub Releases (python download.py → run/src/)
+run/src/*.pt
+
+# caches (osmnx / Overpass, ultralytics)
+cache/
+runs/
 
 # Python
 __pycache__/
@@ -11,13 +16,11 @@ __pycache__/
 build/
 dist/
 
-# Virtual environments
+# virtual environments
 .venv/
 venv/
-
-# Model weights: distribute through GitHub Releases
-weights/*.pt
 
 # OS / editor
 .DS_Store
 .vscode/
+.ipynb_checkpoints/
