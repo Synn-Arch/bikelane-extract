@@ -2,11 +2,13 @@
 data/
 *.geojson
 
-# example: your own runs are not committed; the shipped inputs and results are
+# example: tiles come from the GitHub Release (python download.py --tiles <REGION>); own runs are not
+# committed; Tile_Mappings.csv / imagery_info.json (input) and our results (output/provided) are
+example/input/*/tiles/
+example/input/*/*.zip
 example/output/*
 !example/output/provided/
 !example/output/provided/**
-example/input/*/example_input.json
 
 # model weights: distributed through GitHub Releases (python download.py → run/src/)
 run/src/*.pt
